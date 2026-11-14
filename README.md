@@ -2,7 +2,9 @@
 
 FastMCP 服务通过霜華 API 提供文生图、参考图生图、文生视频和图生视频。默认连接 `https://www.shapi.vip`，MCP 使用 Streamable HTTP。
 
-作者：[烨染霜华](https://github.com/zhaibingye) · [MIT 许可证](LICENSE)
+作者：[烨染霜华](https://github.com/zhaibingye)
+
+本项目版权归烨染霜华（2026）所有，按 GNU GPL 第 3 版或任何更高版本（`GPL-3.0-or-later`）发布。 [许可证全文](LICENSE)
 
 ## 启动
 

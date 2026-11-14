@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 烨染霜华
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """FastMCP tools for image and video generation through Shapi."""
 
 import argparse

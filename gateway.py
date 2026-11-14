@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 烨染霜华
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """HTTP transport and shared validation for Shapi tools."""
 
 import base64
