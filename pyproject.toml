@@ -1,0 +1,17 @@
+[project]
+name = "huimeng-mcp"
+version = "0.1.0"
+description = "Image and video generation tools for the Shapi gateway"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=4.2.0,<5",
+    "httpx>=0.28,<1",
+    "mcp>=1.26,<3",
+    "pydantic>=2.11,<3",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100

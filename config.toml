@@ -1,0 +1,3 @@
+[gateway]
+# 是否接受客户端通过 URL 请求头指定上游地址。
+allow_url_header = false
