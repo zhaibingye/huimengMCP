@@ -56,6 +56,10 @@ def http_url(value: str) -> bool:
         return False
 
 
+def first_http_url(*values: object) -> str | None:
+    return next((value for value in values if isinstance(value, str) and http_url(value)), None)
+
+
 def image_data(value: str) -> tuple[str, str]:
     match = DATA_IMAGE.fullmatch(value)
     if match is None:

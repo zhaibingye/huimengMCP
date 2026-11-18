@@ -8,6 +8,8 @@ FastMCP 服务通过霜華 API 提供文生图、参考图生图、文生视频�
 
 ## 启动
 
+部署、PM2 进程守护、卸载和更新请看[简明教程](TUTORIAL.md)。
+
 需要 Python 3.11+ 和 uv。在项目目录打开 PowerShell：
 
 ```powershell
@@ -60,9 +62,9 @@ allow_url_header = true
 
 | 工具 | 参数和返回值 |
 | --- | --- |
-| `generate_image` | 传 `prompt`，可选 `provider`、`model`、`reference_images` 和 `options`。返回图片链接或 MCP 图片内容。SVG 以 MCP 嵌入资源返回。 |
+| `generate_image` | 传 `prompt`，可选 `provider`、`model`、`reference_images` 和 `options`。每张图片以 `images[].url` 返回 HTTP(S) URL。 |
 | `generate_video` | 传 `prompt`，可选 `provider`、`model`、`duration_seconds`、`aspect_ratio`、`resolution` 和参考图。提交后返回 `provider`、`task_id` 和状态。 |
-| `get_video_status` | 传提交时返回的 `provider` 和 `task_id`，间隔数秒查询。完成后返回 `video_url`，有尾帧时也返回 `last_frame_url`。 |
+| `get_video_status` | 传提交时返回的 `provider` 和 `task_id`，间隔数秒查询。完成后返回 HTTP(S) `video_url`，有尾帧链接时也返回 `last_frame_url`。 |
 | `list_media_models` | 调用 `GET /v1/models`，列出当前令牌可见的生图和生视频系列模型。网关别名可以直接传给 `model`。 |
 
 例如，调用 `generate_image` 时使用以下参数即可选择 GPT Image 2.6 Flare：
@@ -90,6 +92,8 @@ allow_url_header = true
 ```
 
 图片参考输入使用 HTTP(S) URL 或图片 Base64 data URL。Google 生图使用 Base64 data URL，Google 视频的参考输入使用 PNG 或 JPEG data URL。用 `first_frame`、`last_frame` 和 `reference_images` 指定视频参考图，支持的组合由模型决定。网关返回的临时链接请在有效期内使用。图片调用建议给 MCP 客户端配置至少 300 秒的工具超时。
+
+上游提供图片 URL 时会直接返回。上游仅提供 Base64 图片时，MCP 会保存临时文件，并返回当前服务的 `/media/...` URL。该链接有效期为 1 小时，服务重启后失效，持有链接即可访问。通过反向代理部署时，请转发 `/media/` 路径，并确保 MCP 服务能识别外部请求的域名和协议。
 
 ## 网关路径和默认模型
 

@@ -4,27 +4,25 @@
 """FastMCP tools for image and video generation through Shapi."""
 
 import argparse
-import json
 import os
 import re
 from typing import Annotated, Any, Literal
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
-from fastmcp.tools import ToolResult
-from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 from pydantic import Field
 
 from gateway import (
     Options,
     Prompt,
     TaskID,
-    http_url,
+    first_http_url,
     image_data,
     image_input,
     provider_options,
     request_json,
 )
+from media import get_generated_image, publish_image
 
 ImageProvider = Literal["openai", "bytedance", "xai", "google"]
 VideoProvider = Literal["bytedance", "xai", "google"]
@@ -69,29 +67,41 @@ IMAGE_MIME = {
 mcp = FastMCP(
     "Huimeng",
     instructions=(
-        "使用霜華 API 生成图片和视频。generate_image 直接返回图片或链接。"
+        "使用霜華 API 生成图片和视频。generate_image 返回图片 URL。"
         "generate_video 返回任务 ID，使用相同的 provider 和 task_id 调用 "
-        "get_video_status，直到任务完成或失败。"
+        "get_video_status 查询状态并获取视频 URL。"
     ),
     mask_error_details=True,
 )
+mcp.custom_route("/media/{filename}", methods=["GET"])(get_generated_image)
 
 
-def image_result(
+async def image_result(
     data: dict[str, Any], provider: ImageProvider, model: str, default_mime: str
-) -> ToolResult:
+) -> dict[str, Any]:
     images: list[dict[str, Any]] = []
-    media: list[ImageContent | EmbeddedResource] = []
     text: list[str] = []
     if provider == "google":
         for candidate in data.get("candidates") or []:
             for part in (candidate.get("content") or {}).get("parts") or []:
                 if part.get("thought"):
                     continue
-                inline = part.get("inlineData") or part.get("inline_data") or {}
-                mime = inline.get("mimeType") or inline.get("mime_type") or default_mime
-                if inline.get("data") and mime.startswith("image/"):
-                    images.append({"b64_json": inline["data"], "mime_type": mime})
+                blob = (
+                    part.get("inlineData")
+                    or part.get("inline_data")
+                    or part.get("fileData")
+                    or part.get("file_data")
+                    or {}
+                )
+                mime = blob.get("mimeType") or blob.get("mime_type") or default_mime
+                if blob and isinstance(mime, str) and mime.startswith("image/"):
+                    images.append(
+                        {
+                            "url": blob.get("fileUri") or blob.get("file_uri"),
+                            "b64_json": blob.get("data"),
+                            "mime_type": mime,
+                        }
+                    )
                 if part.get("text"):
                     text.append(part["text"])
     else:
@@ -116,40 +126,25 @@ def image_result(
 
     files = []
     for image in images:
+        url = first_http_url(image.get("url"))
         encoded = image.get("b64_json")
-        mime = image["mime_type"]
-        url = image.get("url")
-        if isinstance(encoded, str) and encoded:
-            files.append({"mime_type": mime, "content_index": len(media) + 1})
-            if mime == "image/svg+xml":
-                media.append(
-                    EmbeddedResource(
-                        type="resource",
-                        resource=BlobResourceContents(
-                            uri=f"huimeng://image/{len(files)}.svg", mimeType=mime, blob=encoded
-                        ),
-                    )
-                )
-            else:
-                media.append(ImageContent(type="image", data=encoded, mimeType=mime))
-        elif isinstance(url, str) and http_url(url):
+        if url is None and isinstance(encoded, str) and encoded:
+            url = await publish_image(encoded, image["mime_type"])
+        if url is not None:
             files.append({"url": url})
 
     if not files:
         feedback = data.get("promptFeedback") or {}
-        reason = feedback.get("blockReason") or "响应中没有可用图片"
+        reason = feedback.get("blockReason") or "响应中没有可用的图片 URL"
         raise ToolError(f"{provider} 生图失败：{reason}")
 
-    result = {"provider": provider, "model": model, "images": files}
+    result: dict[str, Any] = {"provider": provider, "model": model, "images": files}
     if text:
         result["text"] = "\n".join(text)
     usage = data.get("usageMetadata") or data.get("usage_metadata") or data.get("usage")
     if usage:
         result["usage"] = usage
-    return ToolResult(
-        content=[TextContent(type="text", text=json.dumps(result, ensure_ascii=False)), *media],
-        structured_content=result,
-    )
+    return result
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": False, "openWorldHint": True})
@@ -159,8 +154,8 @@ async def generate_image(
     model: Prompt | None = None,
     reference_images: list[str] | None = None,
     options: Options | None = None,
-) -> ToolResult:
-    """文生图或参考图生图，返回图片内容或链接。
+) -> dict[str, Any]:
+    """文生图或参考图生图，在 images 中返回图片 URL。
 
     Args:
         prompt: 描述要生成的图片或要对参考图做的修改。
@@ -192,7 +187,7 @@ async def generate_image(
             payload=payload,
             timeout=300,
         )
-        return image_result(data, provider, model, "image/png")
+        return await image_result(data, provider, model, "image/png")
 
     path = "/v1/images/edits" if references else "/v1/images/generations"
     payload = {"model": model, "prompt": prompt, **params}
@@ -205,7 +200,7 @@ async def generate_image(
             payload["image"] = references[0] if len(references) == 1 else references
         default_mime = "image/png" if model.startswith("doubao-seedream-5-5-") else "image/jpeg"
     elif provider == "xai":
-        payload.setdefault("response_format", "b64_json")
+        payload.setdefault("response_format", "url")
         if len(references) == 1:
             payload["image"] = {"url": references[0], "type": "image_url"}
         elif references:
@@ -218,7 +213,7 @@ async def generate_image(
     if isinstance(output_format, str):
         default_mime = IMAGE_MIME.get(output_format, default_mime)
     data = await request_json("POST", path, payload=payload, timeout=300)
-    return image_result(data, provider, model, default_mime)
+    return await image_result(data, provider, model, default_mime)
 
 
 def ark_image(url: str, role: str) -> dict[str, Any]:
@@ -351,7 +346,7 @@ async def generate_video(
 
 @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
 async def get_video_status(provider: VideoProvider, task_id: TaskID) -> dict[str, Any]:
-    """查询视频任务，成功后返回视频链接。provider 应与提交时一致。"""
+    """查询视频任务，成功后返回 video_url 和可用的 last_frame_url。provider 应与提交时一致。"""
     _, status_path = VIDEO_ROUTES[provider]
     data = await request_json("GET", f"{status_path}/{task_id}", timeout=30)
     status = VIDEO_STATUS.get(data.get("status"))
@@ -371,23 +366,26 @@ async def get_video_status(provider: VideoProvider, task_id: TaskID) -> dict[str
     if video.get("respect_moderation") is False:
         result.update(status="failed", error={"message": "视频未通过上游内容审核。"})
         return result
-    url = content.get("video_url") or video.get("url") or metadata.get("url")
-    if not isinstance(url, str) or not http_url(url):
+    url = first_http_url(
+        content.get("video_url"), video.get("url"), metadata.get("url"), data.get("video_url")
+    )
+    if url is None:
         artifacts = await request_json("GET", f"/v1/tasks/{task_id}/artifacts", timeout=30)
-        url = next(
-            (
+        url = first_http_url(
+            *(
                 item.get("content_url")
-                for item in artifacts.get("artifacts", [])
-                if item.get("type") == "video" and item.get("content_url")
-            ),
-            None,
+                for item in artifacts.get("artifacts") or []
+                if isinstance(item, dict) and item.get("type") == "video"
+            )
         )
-    if isinstance(url, str) and http_url(url):
+    if url is not None:
         result["video_url"] = url
     else:
         result["message"] = "任务已完成，网关没有返回可用的视频链接。"
-    last_frame_url = content.get("last_frame_url") or metadata.get("last_frame_url")
-    if isinstance(last_frame_url, str) and http_url(last_frame_url):
+    last_frame_url = first_http_url(
+        content.get("last_frame_url"), metadata.get("last_frame_url"), data.get("last_frame_url")
+    )
+    if last_frame_url is not None:
         result["last_frame_url"] = last_frame_url
     duration = data.get("duration") or video.get("duration") or data.get("seconds")
     if duration is not None:
